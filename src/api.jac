@@ -1,9 +1,14 @@
-import from .models {
+import from src.models {
+    Organization,
     Channel,
+    Member,
     Message,
     FileRecord,
-    get_workspace,
-    get_channels,
+    get_organizations,
+    get_organization_by_name,
+    get_channels_for_org,
+    get_members_for_org,
+    get_member_count,
     ensure_channel,
     get_messages,
     get_files
@@ -13,48 +18,74 @@ import from .tools {
     add_file_record
 }
 import from .agents {
-    ask_workspace_agent,
-    ask_channel_agent
+    ask_organization_agent,
+    ask_channel_agent,
+    build_agent_tree
 }
 import from .seed { seed_demo_data }
 
 def:pub bootstrap_demo() -> dict {
-    return seed_demo_data();
-}
-
-def:pub get_workspace_info() -> dict {
     seed_demo_data();
-    workspace = get_workspace();
     return {
-        "name": workspace.name,
-        "description": workspace.description
+        "status": "ok",
+        "message": "Demo data bootstrapped successfully."
     };
 }
 
-def:pub list_channels() -> list[Channel] {
+def:pub list_organizations() -> list[Organization] {
     seed_demo_data();
-    return get_channels();
+    return get_organizations();
 }
 
-def:pub create_channel(name: str, topic: str, visibility: str = "public") -> Channel {
-    return ensure_channel(name, topic, visibility);
-}
-
-def:pub list_messages(channel_name: str = "general") -> list[Message] {
+def:pub get_organization_info(org_name: str) -> dict {
     seed_demo_data();
-    return get_messages(channel_name);
+    org = get_organization_by_name(org_name);
+    if not org {
+        return {};
+    }
+    return {
+        "name": org.name,
+        "description": org.description,
+        "member_count": get_member_count(org_name),
+        "channel_count": len(get_channels_for_org(org_name))
+    };
 }
 
-def:pub create_message(channel_name: str, author: str, content: str) -> Message {
-    return post_message(channel_name, author, content);
-}
-
-def:pub list_files(channel_name: str = "general") -> list[FileRecord] {
+def:pub list_organization_channels(org_name: str) -> list[Channel] {
     seed_demo_data();
-    return get_files(channel_name);
+    return get_channels_for_org(org_name);
+}
+
+def:pub list_organization_members(org_name: str) -> list[Member] {
+    seed_demo_data();
+    return get_members_for_org(org_name);
+}
+
+def:pub get_organization_member_count(org_name: str) -> dict {
+    seed_demo_data();
+    return {"organization": org_name, "member_count": get_member_count(org_name)};
+}
+
+def:pub create_channel(org_name: str, name: str, topic: str, visibility: str = "public") -> Channel {
+    return ensure_channel(org_name, name, topic, visibility);
+}
+
+def:pub list_messages(org_name: str, channel_name: str = "general") -> list[Message] {
+    seed_demo_data();
+    return get_messages(org_name, channel_name);
+}
+
+def:pub create_message(org_name: str, channel_name: str, author: str, content: str) -> Message {
+    return post_message(org_name, channel_name, author, content);
+}
+
+def:pub list_files(org_name: str, channel_name: str = "general") -> list[FileRecord] {
+    seed_demo_data();
+    return get_files(org_name, channel_name);
 }
 
 def:pub create_file_record(
+    org_name: str,
     channel_name: str,
     filename: str,
     uploaded_by: str,
@@ -62,15 +93,20 @@ def:pub create_file_record(
     summary: str,
     tags: list[str] = []
 ) -> FileRecord {
-    return add_file_record(channel_name, filename, uploaded_by, url_or_path, summary, tags);
+    return add_file_record(org_name, channel_name, filename, uploaded_by, url_or_path, summary, tags);
 }
 
-def:pub ask_workspace(prompt: str) -> dict {
+def:pub ask_organization(org_name: str, prompt: str) -> dict {
     seed_demo_data();
-    return ask_workspace_agent(prompt);
+    return ask_organization_agent(org_name, prompt);
 }
 
-def:pub ask_channel(channel_name: str, prompt: str) -> dict {
+def:pub ask_channel(org_name: str, channel_name: str, prompt: str) -> dict {
     seed_demo_data();
-    return ask_channel_agent(channel_name, prompt);
+    return ask_channel_agent(org_name, channel_name, prompt);
+}
+
+def:pub get_agent_tree(org_name: str) -> dict {
+    seed_demo_data();
+    return build_agent_tree(org_name);
 }

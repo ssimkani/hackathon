@@ -1,7 +1,9 @@
-import from byllm.lib { Model }
+import from byllm.llm { Model }
 import from .models {
-    get_channels,
-    get_channel_by_name,
+    get_organizations,
+    get_organization_by_name,
+    get_channels_for_org,
+    get_channel_by_org_and_name,
     ensure_general_agent,
     ensure_channel_agent,
     ensure_message_agent,
@@ -18,66 +20,72 @@ import from .tools {
     summarize_files
 }
 
-glob llm: Model = Model(model_name="gpt-5.4");
+glob llm: Model = Model(model_name="gpt-4o");
+
+sem choose_organization = """
+Choose the best organization name from the provided options.
+Return only one organization name from the options.
+""";
 
 sem choose_channel = """
-You are the workspace-level coordinator for a team collaboration app.
 Choose the best channel name from the provided options.
-Infer the best channel when possible.
 Return only one channel name from the options.
 """;
 
 sem choose_domain = """
-You are a channel-level router.
 Choose whether the user request is about messages or files.
 Return only one word: messages or files.
 """;
 
-sem general_agent_reply = """
-You are the workspace-level coordinator.
-You know all channels and their purposes.
-You do not use tools.
-Explain which channel you selected and why in one concise sentence.
-""";
+def choose_organization(prompt: str, organization_options: list[str]) -> str by llm(temperature=0.1);
+def choose_channel(prompt: str, channel_options: list[str]) -> str by llm(temperature=0.1);
+def choose_domain(prompt: str) -> str by llm(temperature=0.1);
 
-sem channel_agent_reply = """
-You are a channel specialist.
-You do not use tools.
-Explain whether the request should go to the message agent or file agent in one concise sentence.
-""";
+def organization_catalog() -> list[dict] {
+    return [
+        {
+            "name": org.name,
+            "description": org.description,
+            "member_count": org.member_count
+        }
+        for org in get_organizations()
+    ];
+}
 
-sem message_agent_reply = """
-You are a message specialist for one channel.
-Use the provided tool results to answer clearly and concisely.
-If the user asked to post a message, confirm the action.
-""";
-
-sem file_agent_reply = """
-You are a file-share specialist for one channel.
-Use the provided tool results to answer clearly and concisely.
-Prefer concise summaries and direct references to filenames and links.
-""";
-
-def choose_channel(prompt: str, channel_options: list[str]) -> str by llm(method="Reason", temperature=0.1);
-def choose_domain(prompt: str) -> str by llm(method="Reason", temperature=0.1);
-def general_agent_reply(prompt: str, channels: list[dict], selected_channel: str) -> str by llm(method="Reason", temperature=0.2);
-def channel_agent_reply(prompt: str, channel_name: str, topic: str, selected_domain: str) -> str by llm(method="Reason", temperature=0.2);
-def message_agent_reply(prompt: str, channel_name: str, tool_result: dict) -> str by llm(method="Reason", tools=[list_recent_messages, search_messages, post_message, summarize_recent_messages], temperature=0.2);
-def file_agent_reply(prompt: str, channel_name: str, tool_result: dict) -> str by llm(method="Reason", tools=[list_files, search_files, add_file_record, summarize_files], temperature=0.2);
-
-def channel_catalog() -> list[dict] {
+def channel_catalog(org_name: str) -> list[dict] {
     return [
         {
             "name": channel.name,
             "topic": channel.topic,
             "visibility": channel.visibility
         }
-        for channel in get_channels()
+        for channel in get_channels_for_org(org_name)
     ];
 }
 
-def route_channel(prompt: str) -> str {
-    channels = get_channels();
+def route_organization(prompt: str) -> str {
+    orgs = get_organizations();
+    options = [org.name for org in orgs];
+    if len(options) == 0 {
+        return "";
+    }
+    selected = choose_organization(prompt, options);
+    for option in options {
+        if selected.lower() == option.lower() {
+            return option;
+        }
+    }
+    prompt_lower = prompt.lower();
+    for option in options {
+        if option.lower() in prompt_lower {
+            return option;
+        }
+    }
+    return options[0];
+}
+
+def route_channel(org_name: str, prompt: str) -> str {
+    channels = get_channels_for_org(org_name);
     options = [channel.name for channel in channels];
     if len(options) == 0 {
         return "general";
@@ -101,24 +109,45 @@ def route_domain(prompt: str) -> str {
     selected = choose_domain(prompt);
     if selected.lower() == "files" {
         return "files";
-    } else {
-        if selected.lower() == "messages" {
-            return "messages";
-        } else {
-            prompt_lower = prompt.lower();
-            file_words = ["file", "pdf", "doc", "document", "upload", "link", "share"];
-            for word in file_words {
-                if word in prompt_lower {
-                    return "files";
-                }
-            }
-            return "messages";
+    }
+    if selected.lower() == "messages" {
+        return "messages";
+    }
+    prompt_lower = prompt.lower();
+    for word in ["file", "pdf", "doc", "document", "upload", "link", "share"] {
+        if word in prompt_lower {
+            return "files";
         }
     }
+    return "messages";
 }
 
-def run_message_agent(channel_name: str, prompt: str) -> dict {
-    ensure_message_agent(channel_name);
+def build_agent_tree(org_name: str) -> dict {
+    ensure_general_agent(org_name);
+    channels = get_channels_for_org(org_name);
+    return {
+        "organization": org_name,
+        "root": {
+            "name": "organization-coordinator",
+            "type": "general_agent",
+            "children": [
+                {
+                    "name": channel.name + "-channel-agent",
+                    "type": "channel_agent",
+                    "channel": channel.name,
+                    "children": [
+                        {"name": channel.name + "-message-agent", "type": "message_agent", "channel": channel.name},
+                        {"name": channel.name + "-file-agent", "type": "file_agent", "channel": channel.name}
+                    ]
+                }
+                for channel in channels
+            ]
+        }
+    };
+}
+
+def run_message_agent(org_name: str, channel_name: str, prompt: str) -> dict {
+    ensure_message_agent(org_name, channel_name);
     prompt_lower = prompt.lower();
     if "post" in prompt_lower or "send" in prompt_lower or "announce" in prompt_lower {
         content = prompt;
@@ -128,128 +157,107 @@ def run_message_agent(channel_name: str, prompt: str) -> dict {
                 content = parts[1];
             }
         }
-        tool_result = {
-            "action": "post_message",
-            "created": post_message(channel_name, "Assistant", content),
-            "summary": summarize_recent_messages(channel_name)
-        };
+        created = post_message(org_name, channel_name, "Assistant", content);
+        summary = summarize_recent_messages(org_name, channel_name);
         return {
             "channel": channel_name,
             "domain": "messages",
-            "tool_result": tool_result,
-            "response": message_agent_reply(prompt, channel_name, tool_result)
+            "tool_result": {"action": "post_message", "created": created, "summary": summary},
+            "response": f"Message agent posted an update in #{channel_name} for {org_name}."
         };
-    } else {
-        if "search" in prompt_lower or "find" in prompt_lower {
-            tool_result = {
-                "action": "search_messages",
-                "results": search_messages(channel_name, prompt),
-                "summary": summarize_recent_messages(channel_name)
-            };
-            return {
-                "channel": channel_name,
-                "domain": "messages",
-                "tool_result": tool_result,
-                "response": message_agent_reply(prompt, channel_name, tool_result)
-            };
-        } else {
-            tool_result = {
-                "action": "summarize_recent_messages",
-                "results": list_recent_messages(channel_name, 8),
-                "summary": summarize_recent_messages(channel_name)
-            };
-            return {
-                "channel": channel_name,
-                "domain": "messages",
-                "tool_result": tool_result,
-                "response": message_agent_reply(prompt, channel_name, tool_result)
-            };
-        }
     }
+    if "search" in prompt_lower or "find" in prompt_lower {
+        results = search_messages(org_name, channel_name, prompt);
+        summary = summarize_recent_messages(org_name, channel_name);
+        return {
+            "channel": channel_name,
+            "domain": "messages",
+            "tool_result": {"action": "search_messages", "results": results, "summary": summary},
+            "response": f"Message agent searched #{channel_name} in {org_name} and found {len(results)} matching messages."
+        };
+    }
+    results = list_recent_messages(org_name, channel_name, 8);
+    summary = summarize_recent_messages(org_name, channel_name);
+    return {
+        "channel": channel_name,
+        "domain": "messages",
+        "tool_result": {"action": "summarize_recent_messages", "results": results, "summary": summary},
+        "response": f"Message agent summarized recent conversation in #{channel_name} for {org_name}."
+    };
 }
 
-def run_file_agent(channel_name: str, prompt: str) -> dict {
-    ensure_file_agent(channel_name);
+def run_file_agent(org_name: str, channel_name: str, prompt: str) -> dict {
+    ensure_file_agent(org_name, channel_name);
     prompt_lower = prompt.lower();
     if "add file" in prompt_lower or "register file" in prompt_lower {
-        tool_result = {
-            "action": "add_file_record",
-            "created": add_file_record(
-                channel_name,
-                "new-file.txt",
-                "Assistant",
-                "/shared/new-file.txt",
-                prompt,
-                ["new", channel_name]
-            ),
-            "summary": summarize_files(channel_name)
-        };
+        created = add_file_record(
+            org_name,
+            channel_name,
+            "new-file.txt",
+            "Assistant",
+            "/shared/new-file.txt",
+            prompt,
+            ["new", channel_name]
+        );
+        summary = summarize_files(org_name, channel_name);
         return {
             "channel": channel_name,
             "domain": "files",
-            "tool_result": tool_result,
-            "response": file_agent_reply(prompt, channel_name, tool_result)
+            "tool_result": {"action": "add_file_record", "created": created, "summary": summary},
+            "response": f"File agent added a file record in #{channel_name} for {org_name}."
         };
-    } else {
-        if "find" in prompt_lower or "search" in prompt_lower or "pdf" in prompt_lower {
-            tool_result = {
-                "action": "search_files",
-                "results": search_files(channel_name, prompt),
-                "summary": summarize_files(channel_name)
-            };
-            return {
-                "channel": channel_name,
-                "domain": "files",
-                "tool_result": tool_result,
-                "response": file_agent_reply(prompt, channel_name, tool_result)
-            };
-        } else {
-            tool_result = {
-                "action": "summarize_files",
-                "results": list_files(channel_name, 8),
-                "summary": summarize_files(channel_name)
-            };
-            return {
-                "channel": channel_name,
-                "domain": "files",
-                "tool_result": tool_result,
-                "response": file_agent_reply(prompt, channel_name, tool_result)
-            };
-        }
     }
+    if "find" in prompt_lower or "search" in prompt_lower or "pdf" in prompt_lower {
+        results = search_files(org_name, channel_name, prompt);
+        summary = summarize_files(org_name, channel_name);
+        return {
+            "channel": channel_name,
+            "domain": "files",
+            "tool_result": {"action": "search_files", "results": results, "summary": summary},
+            "response": f"File agent searched #{channel_name} in {org_name} and found {len(results)} matching files."
+        };
+    }
+    results = list_files(org_name, channel_name, 8);
+    summary = summarize_files(org_name, channel_name);
+    return {
+        "channel": channel_name,
+        "domain": "files",
+        "tool_result": {"action": "summarize_files", "results": results, "summary": summary},
+        "response": f"File agent summarized shared files in #{channel_name} for {org_name}."
+    };
 }
 
-def ask_workspace_agent(prompt: str) -> dict {
-    ensure_general_agent();
-    selected_channel = route_channel(prompt);
-    channel = get_channel_by_name(selected_channel);
+def ask_organization_agent(org_name: str, prompt: str) -> dict {
+    ensure_general_agent(org_name);
+    selected_channel = route_channel(org_name, prompt);
     selected_domain = route_domain(prompt);
-    general_note = general_agent_reply(prompt, channel_catalog(), selected_channel);
-    channel_note = channel_agent_reply(prompt, selected_channel, channel.topic if channel else "", selected_domain);
-    leaf_result = run_file_agent(selected_channel, prompt) if selected_domain == "files" else run_message_agent(selected_channel, prompt);
+    leaf_result = run_file_agent(org_name, selected_channel, prompt) if selected_domain == "files" else run_message_agent(org_name, selected_channel, prompt);
     return {
         "prompt": prompt,
+        "selected_organization": org_name,
         "selected_channel": selected_channel,
         "selected_domain": selected_domain,
-        "general_agent": general_note,
-        "channel_agent": channel_note,
+        "general_agent": f"Root assistant selected {org_name} and routed the request to #{selected_channel}.",
+        "channel_agent": f"Channel agent for #{selected_channel} routed the request to the {selected_domain} specialist.",
         "leaf_agent": leaf_result["response"],
+        "agent_tree": build_agent_tree(org_name),
         "result": leaf_result
     };
 }
 
-def ask_channel_agent(channel_name: str, prompt: str) -> dict {
-    ensure_channel_agent(channel_name);
-    channel = get_channel_by_name(channel_name);
+def ask_channel_agent(org_name: str, channel_name: str, prompt: str) -> dict {
+    ensure_channel_agent(org_name, channel_name);
     selected_domain = route_domain(prompt);
-    channel_note = channel_agent_reply(prompt, channel_name, channel.topic if channel else "", selected_domain);
-    leaf_result = run_file_agent(channel_name, prompt) if selected_domain == "files" else run_message_agent(channel_name, prompt);
+    leaf_result = run_file_agent(org_name, channel_name, prompt) if selected_domain == "files" else run_message_agent(org_name, channel_name, prompt);
     return {
         "prompt": prompt,
+        "selected_organization": org_name,
         "selected_channel": channel_name,
         "selected_domain": selected_domain,
-        "channel_agent": channel_note,
+        "general_agent": f"Root assistant stayed inside {org_name}.",
+        "channel_agent": f"Channel agent for #{channel_name} routed the request to the {selected_domain} specialist.",
         "leaf_agent": leaf_result["response"],
+        "agent_tree": build_agent_tree(org_name),
         "result": leaf_result
     };
 }

@@ -1,14 +1,18 @@
 import from src.api {
     bootstrap_demo,
-    get_workspace_info,
-    list_channels,
+    list_organizations,
+    get_organization_info,
+    list_organization_channels,
+    list_organization_members,
+    get_organization_member_count,
     create_channel,
     list_messages,
     create_message,
     list_files,
     create_file_record,
-    ask_workspace,
-    ask_channel
+    ask_organization,
+    ask_channel,
+    get_agent_tree
 }
 import from src.seed { seed_demo_data }
 
