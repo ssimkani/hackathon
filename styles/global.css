@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --color-background: #0b1020;
+    --color-foreground: #e5eefb;
+    --color-card: #121a2f;
+    --color-card-hover: #18223d;
+    --color-primary: #6ea8fe;
+    --color-primary-foreground: #08111f;
+    --color-muted: #0f172a;
+    --color-muted-foreground: #94a3b8;
+    --color-border: #24314f;
+    --color-success: #34d399;
+    --color-warning: #fbbf24;
+    --color-destructive: #f87171;
+    --shadow-soft: 0 8px 30px rgba(2, 8, 23, 0.24);
+    --shadow-card: 0 18px 60px rgba(2, 8, 23, 0.35);
+    --radius-sm: 0.5rem;
+    --radius-md: 0.875rem;
+    --radius-lg: 1.25rem;
+    --radius-full: 9999px;
+}
+
+.dark {
+    --color-background: #050816;
+    --color-foreground: #f8fbff;
+    --color-card: #0f172a;
+    --color-card-hover: #17213a;
+    --color-primary: #8ab4ff;
+    --color-primary-foreground: #07101d;
+    --color-muted: #0b1224;
+    --color-muted-foreground: #9fb0c9;
+    --color-border: #22304d;
+}
+
+html, body, #root {
+    min-height: 100vh;
+}
+
+body {
+    margin: 0;
+    background:
+        radial-gradient(circle at top left, rgba(110, 168, 254, 0.18), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(52, 211, 153, 0.12), transparent 22%),
+        var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+* {
+    box-sizing: border-box;
+}

@@ -1,0 +1,12 @@
+[project]
+name = "hackathon"
+default_model = "gpt-5.4"
+
+[plugins.client.vite]
+packages = ["tailwindcss", "@tailwindcss/vite"]
+
+[dependencies.npm]
+jac-client-node = "1.0.7"
+
+[dependencies.npm.dev]
+"@jac-client/dev-deps" = "2.0.0"
